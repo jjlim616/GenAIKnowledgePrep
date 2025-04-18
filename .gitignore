@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+.venv/
+*.env
+encryption_key.txt
+project_ragflow_config.db
+
+transcription_logs/*
+!transcription_logs/__init__.py
+
+transcription_temp/*
+!transcription_temp/__init__.py
+
+transcript/*
+!transcript/__init__.py
