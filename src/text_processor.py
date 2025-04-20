@@ -1,34 +1,72 @@
-# src/text_processor.py
 import io
 import os
 import uuid
 from docx import Document
-import streamlit as st
 import docx2txt
 import fitz
 import pypandoc
-
-from src.prompts import GENERAL_SUMMARY_PROMPT
+import streamlit as st
+import openai
 from google import genai
-from config import GEMINI_API_KEY
+from config import OPENAI_API_KEY, GEMINI_API_KEY, XAI_API_KEY
+from src.prompts import GENERAL_SUMMARY_PROMPT
 
-client = genai.Client(api_key=GEMINI_API_KEY)   
+# Model configuration
+MODEL_CONFIG = {
+    "gpt-4.1": {
+        "client_type": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "api_key": OPENAI_API_KEY
+    },
+    "o4-mini": {
+        "client_type": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "api_key": OPENAI_API_KEY
+    },
+    "grok-3": {
+        "client_type": "openai",
+        "base_url": "https://api.x.ai/v1",
+        "api_key": XAI_API_KEY
+    },
+    "grok-3-mini": {
+        "client_type": "openai",
+        "base_url": "https://api.x.ai/v1",
+        "api_key": XAI_API_KEY
+    },
+    "gemini-2.0-flash": {
+        "client_type": "gemini",
+        "api_key": GEMINI_API_KEY
+    },
+    "gemini-2.5-pro-exp-03-25": {
+        "client_type": "gemini",
+        "api_key": GEMINI_API_KEY
+    },
+    "gemini-1.5-pro-latest": {
+        "client_type": "gemini",
+        "api_key": GEMINI_API_KEY
+    }
+}
 
-
-def summarize_transcription(transcription_input, model="gemini-2.0-flash", custom_prompt=None):
+def summarize_transcription(transcription_input, model="gemini-2.0-flash", custom_prompt=None, enable_reasoning=False):
     """
-    Generate a summary from transcription data using Gemini API.
+    Generate a summary from transcription data using the specified model.
     
     Args:
         transcription_input: The transcription data as JSON or plain text
-        model: The Gemini model to use for summarization
+        model: The model to use for summarization (e.g., gpt-4.1, grok-3, gemini-2.5-pro)
         custom_prompt: Optional custom system prompt for summarization
+        enable_reasoning: Whether to include step-by-step reasoning (for supported models)
         
     Returns:
-        The generated summary text
+        Tuple of (summary text, reasoning text)
     """
+    config = MODEL_CONFIG[model]
     full_prompt = custom_prompt if custom_prompt else GENERAL_SUMMARY_PROMPT
     
+    # Add reasoning instruction for supported models
+    if enable_reasoning and model in ["grok-3-mini", "gemini-2.5-pro-exp-03-25", "o4-mini"]:
+        full_prompt += "\n\nProvide a step-by-step reasoning process before generating the final summary."
+
     # Handle different input types
     if isinstance(transcription_input, list):
         # JSON format from direct transcription
@@ -41,12 +79,59 @@ def summarize_transcription(transcription_input, model="gemini-2.0-flash", custo
         transcription_text = transcription_input
     else:
         raise ValueError("Unsupported transcription input format")
-    
-    response = client.models.generate_content(
-        model=model,
-        contents=[full_prompt, transcription_text]
-    )
-    return response.text
+
+    try:
+        if config["client_type"] == "openai" and model == "o4-mini":
+            # Initialize OpenAI client
+            client = openai.OpenAI(
+                api_key=config["api_key"],
+                base_url=config["base_url"]
+            )
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": full_prompt},
+                    {"role": "user", "content": transcription_text}
+                ],
+                max_completion_tokens=20000
+                )
+            content = response.choices[0].message.content
+        elif config["client_type"] == "openai":
+            # Initialize OpenAI client for o4-mini
+            client = openai.OpenAI(
+                api_key=config["api_key"],
+                base_url=config["base_url"]
+            )
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": full_prompt},
+                    {"role": "user", "content": transcription_text}
+                ],
+                max_tokens=20000
+            )
+            content = response.choices[0].message.content
+        else:  # Gemini
+            # Initialize Gemini client
+            client = genai.Client(api_key=config["api_key"])
+            response = client.models.generate_content(
+                model=model,
+                contents=[full_prompt, transcription_text]
+            )
+            content = response.text
+
+        # Extract reasoning if enabled
+        reasoning = ""
+        if enable_reasoning and model in ["grok-3-mini", "gemini-2.5-pro-exp-03-25", "o4-mini"]:
+            # Assume reasoning is before a separator or the summary
+            parts = content.split("\n\n---\n\n", 1)  # Adjust based on API response format
+            reasoning = parts[0].strip() if len(parts) > 1 else ""
+            content = parts[-1].strip() if len(parts) > 1 else content
+
+        return content, reasoning
+
+    except Exception as e:
+        raise Exception(f"Error generating summary with {model}: {str(e)}")
 
 def export_transcription_to_docx(transcription_json, output_folder="transcripts", file_name="transcript.docx"):
     if not os.path.exists(output_folder):
@@ -104,7 +189,7 @@ def extract_text_from_pdf(file_bytes):
         with fitz.open(stream=file_bytes, filetype="pdf") as doc:
             text = ""
             for page in doc:
-                text += page.get_text("text") + "\n" # Added newline
+                text += page.get_text("text") + "\n"
             return text
     except Exception as e:
         st.error(f"Error extracting text from PDF: {e}")
