@@ -11,5 +11,5 @@ transcription_logs/*
 transcription_temp/*
 !transcription_temp/__init__.py
 
-transcript/*
-!transcript/__init__.py
+transcripts/*
+!transcripts/__init__.py

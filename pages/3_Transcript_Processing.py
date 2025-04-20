@@ -17,7 +17,7 @@ from src.prompts import (
     GENERAL_MEETING_PROMPT,
     OVERVIEW_SUMMARY_PROMPT
 )
-from src.text_processor_v2 import (
+from src.text_processor import (
     summarize_transcription,
     export_summary_to_docx,
     extract_text_from_docx,
